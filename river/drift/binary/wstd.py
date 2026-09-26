@@ -7,85 +7,42 @@ from river import base
 
 
 class WSTD(base.BinaryDriftAndWarningDetector):
-    r"""Wilcoxon Rank Sum Test drift detector.
+    """Wilcoxon rank-sum drift detector for binary error streams [^1].
 
-    WSTD monitors a stream of boolean indicators and signals a warning or a drift when a
-    Wilcoxon rank-sum test finds the distribution of the most recent observations to be
-    significantly different from that of the older ones. It is a variant of STEPD in which
-    the test of proportions is replaced by the Wilcoxon rank-sum test, whose normal
-    approximation allows an exact and cheap evaluation on binary inputs.
-
-    A sliding window of the last `recent_window_size` + `older_window_size` observations is
-    split into a recent sub-window (the last `recent_window_size` values) and an older
-    sub-window (up to `older_window_size` preceding values). Let $n_1$ and $n_2$ be the sizes
-    of the smaller and the larger sub-window, $N = n_1 + n_2$, and $R$ the rank sum of the
-    smaller sub-window in the pooled sample (ties receive mid-ranks). Under the null
-    hypothesis that both sub-windows are drawn from the same distribution:
-
-    $$
-    z = \frac{R - \mu_R}{\sigma_R}, \quad \mu_R = \frac{n_1 (N + 1)}{2}, \quad
-    \sigma_R = \sqrt{\frac{n_1 n_2 (N + 1)}{12}}
-    $$
-
-    Drift is signaled when the two-sided p-value of $z$ drops below `alpha_drift`, and a
-    warning when it drops below `alpha_warning`. The windows are reset after a drift.
-
-    **Input:** `x` is an entry in a stream of bits, where 1 indicates error/failure and 0
-    represents correct/normal values.
-
-    For example, if a classifier's prediction $y'$ is right or wrong w.r.t. the
-    true target label $y$:
-
-    - 0: Correct, $y=y'$
-
-    - 1: Error, $y \\neq y'$
+    Compares recent and older windows of errors (`True`) and correct
+    predictions (`False`). Uses average ranks and a two-sided normal
+    approximation without variance correction for ties or continuity
+    correction. Drift overrides warnings. The next update resets both
+    windows after drift.
 
     Parameters
     ----------
     recent_window_size
-        The number of most recent observations that form the recent sub-window.
+        Recent window length, at least 2. Must fill before testing.
     older_window_size
-        The maximum number of observations preceding the recent sub-window that form the
-        older sub-window.
+        Older window capacity, at least 2.
     min_instances
-        The minimum number of observations in the older sub-window required before the
-        statistical test is applied.
+        Older-window length needed for testing, from 2 to `older_window_size`.
     alpha_warning
-        Significance level below which a warning is signaled. Must be greater than
-        `alpha_drift`.
+        Warning p-value threshold.
     alpha_drift
-        Significance level below which a drift is signaled.
+        Drift p-value threshold. Must satisfy `0 < alpha_drift < alpha_warning < 1`.
 
     Examples
     --------
-    >>> import random
     >>> from river import drift
-
-    >>> rng = random.Random(42)
-    >>> wstd = drift.binary.WSTD()
-
-    >>> # Simulate a data stream where the first 250 instances come from a uniform distribution
-    >>> # of 1's and 0's
-    >>> data_stream = rng.choices([0, 1], k=250)
-    >>> # Increase the probability of 1's appearing in the next 250 instances
-    >>> data_stream = data_stream + rng.choices([0, 1], k=250, weights=[0.1, 0.9])
-
-    >>> print_warning = True
-    >>> # Update drift detector and verify if change is detected
-    >>> for i, x in enumerate(data_stream):
-    ...     wstd.update(x)
-    ...     if wstd.warning_detected and print_warning:
-    ...         print(f"Warning detected at index {i}")
-    ...         print_warning = False
-    ...     if wstd.drift_detected:
-    ...         print(f"Change detected at index {i}")
-    ...         print_warning = True
-    Warning detected at index 265
-    Change detected at index 277
+    >>> detector = drift.binary.WSTD()
+    >>> for i, x in enumerate([0] * 200 + [1] * 60 + [0] * 200):
+    ...     detector.update(x)
+    ...     if detector.drift_detected:
+    ...         print(i)
+    210
+    273
 
     References
     ----------
-    [^1]: Ricardo S. M. de Barros, José I. Gómez Hidalgo, and Daniel R. L. Cabral. Wilcoxon Rank Sum Test Drift Detector. In Neurocomputing, volume 275, pages 1954-1963, 2018. doi:10.1016/j.neucom.2017.10.051.
+    [^1]: Barros et al. (2018). Wilcoxon Rank Sum Test Drift Detector.
+        DOI 10.1016/j.neucom.2017.10.051.
 
     """
 
@@ -134,13 +91,13 @@ class WSTD(base.BinaryDriftAndWarningDetector):
         self.p_value = 1.0
 
     def update(self, x: bool) -> None:
-        """Update the change detector with a single data point.
+        """Add the outcome of one prediction to the detector.
 
         Parameters
         ----------
         x
-            This parameter indicates whether the last sample analyzed was correctly classified
-            or not. 1 indicates an error (miss-classification).
+            Whether the prediction was incorrect. Use `True` or 1 for an
+            error, and `False` or 0 for a correct prediction.
 
         """
         if self.drift_detected:
